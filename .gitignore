@@ -1,0 +1,12 @@
+**/terraform.tfstate*
+**/.terraform*
+**/backend.tf
+**/terraform.tfplan
+**/values-*.yaml
+params.env
+params-db-secret.env
+
+.DS_Store
+.idea
+.kitchen
+credentials.json
