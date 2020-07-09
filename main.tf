@@ -28,7 +28,9 @@ module "project-services" {
     "ml.googleapis.com",
     "containerregistry.googleapis.com",
     "iap.googleapis.com",
-    "sqladmin.googleapis.com"
+    "sqladmin.googleapis.com",
+    "servicenetworking.googleapis.com",
+    "cloudresourcemanager.googleapis.com"
   ]
 }
 
@@ -57,9 +59,6 @@ module "kfp-apply-crds" {
 
   create_cmd_entrypoint = "${path.module}/scripts/kubectl_wrapper.sh"
   create_cmd_body       = "https://${module.kubeflow-cluster.endpoint} ${data.google_client_config.default.access_token} ${module.kubeflow-cluster.ca_certificate} kubectl apply -k ${local.crd_path}"
-
-  destroy_cmd_entrypoint = "${path.module}/scripts/kubectl_wrapper.sh"
-  destroy_cmd_body       = "https://${module.kubeflow-cluster.endpoint} ${data.google_client_config.default.access_token} ${module.kubeflow-cluster.ca_certificate} kubectl delete -k ${local.crd_path}"
 }
 
 resource "local_file" "params" {
@@ -68,7 +67,7 @@ resource "local_file" "params" {
 }
 
 resource "local_file" "params-db" {
-  content  = local.params-db-secret
+  content  = local.params-db
   filename = "${path.module}/templates/params-db-secret.env"
 }
 
@@ -86,9 +85,6 @@ module "kfp-apply-gcp" {
 
   create_cmd_entrypoint = "${path.module}/scripts/kubectl_wrapper.sh"
   create_cmd_body       = "https://${module.kubeflow-cluster.endpoint} ${data.google_client_config.default.access_token} ${module.kubeflow-cluster.ca_certificate} kubectl apply -k ${local.gcp_path}"
-
-  destroy_cmd_entrypoint = "${path.module}/scripts/kubectl_wrapper.sh"
-  destroy_cmd_body       = "https://${module.kubeflow-cluster.endpoint} ${data.google_client_config.default.access_token} ${module.kubeflow-cluster.ca_certificate} kubectl delete -k ${local.gcp_path}"
 }
 
 # Workload Identity
@@ -111,16 +107,16 @@ resource "google_project_iam_member" "project" {
 }
 
 # Identity-Aware Proxy
-resource "google_iap_brand" "kfp_iap_brand" {
-  support_email     = "project-factory-23247@anshu-seed-project.iam.gserviceaccount.com"
-  application_title = "Cloud IAP protected Kubeflow Pipelines"
-  project           = module.project-services.project_id
-}
+# resource "google_iap_brand" "kfp_iap_brand" {
+#   support_email     = "project-factory-23247@anshu-seed-project.iam.gserviceaccount.com"
+#   application_title = "Cloud IAP protected Kubeflow Pipelines"
+#   project           = module.project-services.project_id
+# }
 
-resource "google_iap_client" "kfp_iap_client" {
-  display_name = "Kubeflow Pipelines Client"
-  brand        = google_iap_brand.kfp_iap_brand.name
-}
+# resource "google_iap_client" "kfp_iap_client" {
+#   display_name = "Kubeflow Pipelines Client"
+#   brand        = google_iap_brand.kfp_iap_brand.name
+# }
 
 # Cloud SQL
 resource "random_id" "instance_name_suffix" {
@@ -128,7 +124,7 @@ resource "random_id" "instance_name_suffix" {
 }
 
 module "mysql-db" {
-  source     = "GoogleCloudPlatform/sql-db/google//modules/mysql"
+  source     = "GoogleCloudPlatform/sql-db/google//modules/safer_mysql"
   version    = "3.2.0"
   name       = local.db_instance
   project_id = module.project-services.project_id
@@ -140,7 +136,7 @@ module "mysql-db" {
   user_name        = "root"
   user_password    = var.db_password
 
-  vpc_network       = google_compute_network.main.network_self_link
+  vpc_network       = google_compute_network.main.self_link
   module_depends_on = [module.private-cloudsql-access.peering_completed]
 }
 

@@ -25,7 +25,7 @@ resource "google_compute_subnetwork" "main" {
 
 # VPC Peering for Private Cloud SQL access
 module "private-cloudsql-access" {
-  source      = "../../modules/private_service_access"
+  source      = "GoogleCloudPlatform/sql-db/google//modules/private_service_access"
   project_id  = module.project-services.project_id
   vpc_network = google_compute_network.main.name
 }
