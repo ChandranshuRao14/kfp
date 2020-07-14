@@ -1,13 +1,13 @@
 locals {
-  system_gsa    = "${var.cluster_name}-kfp-system"
-  user_gsa      = "${var.cluster_name}-kfp-user"
-  system_ksa    = ["ml-pipeline-ui", "ml-pipeline-visualizationserver"]
-  user_ksa      = ["pipeline-runner", "default"]
-  crd_path      = "${path.module}/templates/cluster-scoped-resources/"
-  gcp_path      = "${path.module}/templates/"
-  db_instance   = "${var.db_name}-${random_id.instance_name_suffix.hex}"
-  params        = templatefile("${path.module}/templates/params.env.tpl", { project_id = var.project_id, region = var.region, bucket_name = var.bucket_name, db_instance = local.db_instance })
-  params-db     = templatefile("${path.module}/templates/params-db-secret.env.tpl", { password = var.db_password })
+  system_gsa  = "${var.cluster_name}-kfp-system"
+  user_gsa    = "${var.cluster_name}-kfp-user"
+  system_ksa  = ["ml-pipeline-ui", "ml-pipeline-visualizationserver"]
+  user_ksa    = ["pipeline-runner", "default"]
+  crd_path    = "${path.module}/templates/cluster-scoped-resources/"
+  gcp_path    = "${path.module}/templates/"
+  db_instance = "${var.db_name}-${random_id.instance_name_suffix.hex}"
+  params      = templatefile("${path.module}/templates/params.env.tpl", { project_id = var.project_id, region = var.region, bucket_name = var.bucket_name, db_instance = local.db_instance })
+  params-db   = templatefile("${path.module}/templates/params-db-secret.env.tpl", { password = var.db_password })
 }
 
 data "google_client_config" "default" {
@@ -51,9 +51,9 @@ module "kubeflow-cluster" {
 }
 
 # Deploy KFP CRDs
-module "kfp-apply-crds" { 
+module "kfp-apply-crds" {
   source                = "terraform-google-modules/gcloud/google"
-  module_depends_on     = [module.kubeflow-cluster.endpoint]
+  module_depends_on     = [module.kubeflow-cluster.endpoint, local_file.params.content, local_file.params-db.content]
   platform              = "linux"
   additional_components = ["kubectl", "beta"]
 
@@ -91,8 +91,10 @@ module "kfp-apply-gcp" {
 module "kfp-pipeline-runner-workload-identity" {
   source     = "terraform-google-modules/kubernetes-engine/google//modules/workload-identity"
   project_id = module.project-services.project_id
+  cluster_name = module.kubeflow-cluster.name
   # kfp-apply-gcp.wait is a hack to enforce dependency
   name                = trimsuffix("pipeline-runner-wi-${module.kubeflow-cluster.name}-rand${module.kfp-apply-gcp.wait}", "-rand${module.kfp-apply-gcp.wait}")
+  location            = module.kubeflow-cluster.location
   namespace           = var.namespace
   use_existing_k8s_sa = true
   k8s_sa_name         = "pipeline-runner"
@@ -140,25 +142,29 @@ module "mysql-db" {
   module_depends_on = [module.private-cloudsql-access.peering_completed]
 }
 
+resource "random_id" "suffix" {
+  byte_length = 4
+}
+
 # Cloud Storage bucket
 resource "google_storage_bucket" "artifact-store" {
-  name               = var.bucket_name
-  project            = module.project-services.project_id
-  location           = "US"
+  name     = "${var.bucket_name}-${random_id.suffix.hex}"
+  project  = module.project-services.project_id
+  location = "US"
 }
 
 # make the cluster
 # apply kfp manifests
 # Workload Identity
-  # ml-pipeline-ui is the service account for kfp
-  # wait till the gcloud module is complete
+# ml-pipeline-ui is the service account for kfp
+# wait till the gcloud module is complete
 
 # missing:
-  # Cloud SQL:
-    # sql-db 4.0 release allows for random instance name - ping in PR
-    # Private Cloud SQL - include in PoC
-  # IAP:
-    # https://github.com/terraform-providers/terraform-provider-google/issues/6100
-    # b/154652489
-  # Terraform destroy
-    # you must be logged in to the server
+# Cloud SQL:
+# sql-db 4.0 release allows for random instance name - ping in PR
+# Private Cloud SQL - include in PoC
+# IAP:
+# https://github.com/terraform-providers/terraform-provider-google/issues/6100
+# b/154652489
+# Terraform destroy
+# you must be logged in to the server
