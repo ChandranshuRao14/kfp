@@ -1,6 +1,6 @@
 variable "project_id" {
   description = "The project ID to host the cluster in"
-  default     = "kubeflow-tf-anshu"
+  default     = "kfp-test-project"
 }
 
 variable "cluster_name" {
@@ -54,12 +54,12 @@ variable "node_pools" {
 
 variable "bucket_name" {
   description = "GCS bucket name for GCS-Minio managed storage"
-  default     = "kfp-tf-bucket"
+  default     = "kfp-bucket"
 }
 
 variable "db_name" {
   description = "Cloud SQL metadata db name"
-  default     = "kfp-tf-db"
+  default     = "kfp-db"
 }
 
 variable "db_password" {

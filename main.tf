@@ -1,12 +1,13 @@
 locals {
   system_gsa  = "${var.cluster_name}-kfp-system"
   user_gsa    = "${var.cluster_name}-kfp-user"
-  system_ksa  = ["ml-pipeline-ui", "ml-pipeline-visualizationserver"]
+  system_ksa  = ["ml-pipeline-ui", "ml-pipeline-visualizationserver", "kubeflow-pipelines-cloudsql-proxy", "kubeflow-pipelines-minio-gcs-gateway"]
   user_ksa    = ["pipeline-runner", "default"]
   crd_path    = "${path.module}/templates/cluster-scoped-resources/"
   gcp_path    = "${path.module}/templates/"
+  gcs_bucket  = "${var.bucket_name}-${random_id.suffix.hex}"
   db_instance = "${var.db_name}-${random_id.instance_name_suffix.hex}"
-  params      = templatefile("${path.module}/templates/params.env.tpl", { project_id = var.project_id, region = var.region, bucket_name = var.bucket_name, db_instance = local.db_instance })
+  params      = templatefile("${path.module}/templates/params.env.tpl", { project_id = var.project_id, region = var.region, bucket_name = local.gcs_bucket, db_instance = local.db_instance })
   params-db   = templatefile("${path.module}/templates/params-db-secret.env.tpl", { password = var.db_password })
 }
 
@@ -71,10 +72,6 @@ resource "local_file" "params-db" {
   filename = "${path.module}/templates/params-db-secret.env"
 }
 
-#TODO: re-eval with rmgogogo 
-# havent added kubectl wait --for condition=established --timeout=60s crd/applications.app.k8s.io
-# yet because setup of gcloud module takes aroud 60s
-
 # Deploy KFP GCP yamls
 module "kfp-apply-gcp" {
   source            = "terraform-google-modules/gcloud/google"
@@ -87,10 +84,10 @@ module "kfp-apply-gcp" {
   create_cmd_body       = "https://${module.kubeflow-cluster.endpoint} ${data.google_client_config.default.access_token} ${module.kubeflow-cluster.ca_certificate} kubectl apply -k ${local.gcp_path}"
 }
 
-# Workload Identity
+# Workload Identity for pipeline-runner
 module "kfp-pipeline-runner-workload-identity" {
-  source     = "terraform-google-modules/kubernetes-engine/google//modules/workload-identity"
-  project_id = module.project-services.project_id
+  source       = "terraform-google-modules/kubernetes-engine/google//modules/workload-identity"
+  project_id   = module.project-services.project_id
   cluster_name = module.kubeflow-cluster.name
   # kfp-apply-gcp.wait is a hack to enforce dependency
   name                = trimsuffix("pipeline-runner-wi-${module.kubeflow-cluster.name}-rand${module.kfp-apply-gcp.wait}", "-rand${module.kfp-apply-gcp.wait}")
@@ -100,17 +97,61 @@ module "kfp-pipeline-runner-workload-identity" {
   k8s_sa_name         = "pipeline-runner"
 }
 
-# GSA IAM binding
+# Workload Identity for cloudsql-proxy
+module "kfp-cloudsql-proxy-workload-identity" {
+  source       = "terraform-google-modules/kubernetes-engine/google//modules/workload-identity"
+  project_id   = module.project-services.project_id
+  cluster_name = module.kubeflow-cluster.name
+  # kfp-apply-gcp.wait is a hack to enforce dependency
+  name                = trimsuffix("cloudsql-proxy-wi-${module.kubeflow-cluster.name}-rand${module.kfp-apply-gcp.wait}", "-rand${module.kfp-apply-gcp.wait}")
+  location            = module.kubeflow-cluster.location
+  namespace           = var.namespace
+  use_existing_k8s_sa = true
+  k8s_sa_name         = "kubeflow-pipelines-cloudsql-proxy"
+}
+
+# Workload Identity for minio
+module "kfp-minio-gcs-gateway-workload-identity" {
+  source       = "terraform-google-modules/kubernetes-engine/google//modules/workload-identity"
+  project_id   = module.project-services.project_id
+  cluster_name = module.kubeflow-cluster.name
+  # kfp-apply-gcp.wait is a hack to enforce dependency
+  name                = trimsuffix("minio-wi-${module.kubeflow-cluster.name}-rand${module.kfp-apply-gcp.wait}", "-rand${module.kfp-apply-gcp.wait}")
+  location            = module.kubeflow-cluster.location
+  namespace           = var.namespace
+  use_existing_k8s_sa = true
+  k8s_sa_name         = "kubeflow-pipelines-minio-gcs-gateway"
+}
+
+# GSA IAM binding for Pipeline Runner
 # TODO: least priv
-resource "google_project_iam_member" "project" {
+resource "google_project_iam_member" "pipelinerunner" {
   project = module.project-services.project_id
   role    = "roles/editor"
   member  = module.kfp-pipeline-runner-workload-identity.gcp_service_account_fqn
 }
 
+# GSA IAM binding for CloudSQL proxy
+# TODO: least priv
+resource "google_project_iam_member" "cloudsqlproxy" {
+  project = module.project-services.project_id
+  role    = "roles/editor"
+  member  = module.kfp-cloudsql-proxy-workload-identity.gcp_service_account_fqn
+}
+
+# GSA IAM binding for Minio GCS bucket
+# TODO: least priv; Storage Admin on kfp bucket only
+resource "google_project_iam_member" "miniogcsgateway" {
+  project = module.project-services.project_id
+  role    = "roles/editor"
+  member  = module.kfp-minio-gcs-gateway-workload-identity.gcp_service_account_fqn
+}
+
 # Identity-Aware Proxy
+# Currently IAP is blocked due to the following bug:
+# https://github.com/terraform-providers/terraform-provider-google/issues/6100
 # resource "google_iap_brand" "kfp_iap_brand" {
-#   support_email     = "project-factory-23247@anshu-seed-project.iam.gserviceaccount.com"
+#   support_email     = ""
 #   application_title = "Cloud IAP protected Kubeflow Pipelines"
 #   project           = module.project-services.project_id
 # }
@@ -148,23 +189,7 @@ resource "random_id" "suffix" {
 
 # Cloud Storage bucket
 resource "google_storage_bucket" "artifact-store" {
-  name     = "${var.bucket_name}-${random_id.suffix.hex}"
+  name     = local.gcs_bucket
   project  = module.project-services.project_id
   location = "US"
 }
-
-# make the cluster
-# apply kfp manifests
-# Workload Identity
-# ml-pipeline-ui is the service account for kfp
-# wait till the gcloud module is complete
-
-# missing:
-# Cloud SQL:
-# sql-db 4.0 release allows for random instance name - ping in PR
-# Private Cloud SQL - include in PoC
-# IAP:
-# https://github.com/terraform-providers/terraform-provider-google/issues/6100
-# b/154652489
-# Terraform destroy
-# you must be logged in to the server
