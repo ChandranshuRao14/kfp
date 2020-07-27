@@ -122,7 +122,7 @@ module "kfp-minio-gcs-gateway-workload-identity" {
   k8s_sa_name         = "kubeflow-pipelines-minio-gcs-gateway"
 }
 
-# GSA IAM binding for Pipeline Runner
+# GSA: IAM binding for Pipeline Runner
 # TODO: least priv
 resource "google_project_iam_member" "pipelinerunner" {
   project = module.project-services.project_id
@@ -130,25 +130,23 @@ resource "google_project_iam_member" "pipelinerunner" {
   member  = module.kfp-pipeline-runner-workload-identity.gcp_service_account_fqn
 }
 
-# GSA IAM binding for CloudSQL proxy
-# TODO: least priv
+# GSA: CloudSQL Client binding for CloudSQL proxy SA
 resource "google_project_iam_member" "cloudsqlproxy" {
   project = module.project-services.project_id
-  role    = "roles/editor"
+  role    = "roles/cloudsql.client"
   member  = module.kfp-cloudsql-proxy-workload-identity.gcp_service_account_fqn
 }
 
-# GSA IAM binding for Minio GCS bucket
-# TODO: least priv; Storage Admin on kfp bucket only
-resource "google_project_iam_member" "miniogcsgateway" {
-  project = module.project-services.project_id
-  role    = "roles/editor"
+# GSA: Storage Admin binding for Minio SA
+resource "google_storage_bucket_iam_member" "miniogcsgateway" {
+  bucket  = google_storage_bucket.artifact-store.name
+  role    = "roles/storage.admin"
   member  = module.kfp-minio-gcs-gateway-workload-identity.gcp_service_account_fqn
 }
 
 # Identity-Aware Proxy
-# Currently IAP is blocked due to the following bug:
-# https://github.com/terraform-providers/terraform-provider-google/issues/6100
+# Currently IAP brand update/deletion is blocked by https://github.com/terraform-providers/terraform-provider-google/issues/6100
+# TODO: use https://www.terraform.io/docs/providers/google/r/cloud_identity_group.html to create new group for support_email
 # resource "google_iap_brand" "kfp_iap_brand" {
 #   support_email     = ""
 #   application_title = "Cloud IAP protected Kubeflow Pipelines"
