@@ -11,14 +11,10 @@ locals {
   params-db   = templatefile("${path.module}/templates/params-db-secret.env.tpl", { password = var.db_password })
 }
 
-data "google_client_config" "default" {
-}
-
 # Enable Project APIs
 module "project-services" {
-  source  = "terraform-google-modules/project-factory/google//modules/project_services"
-  version = "~> 6.0.0"
-
+  source                      = "terraform-google-modules/project-factory/google//modules/project_services"
+  version                     = "~> 6.0.0"
   project_id                  = var.project_id
   disable_services_on_destroy = false
 
@@ -53,13 +49,15 @@ module "kubeflow-cluster" {
 
 # Deploy KFP CRDs
 module "kfp-apply-crds" {
-  source                = "terraform-google-modules/gcloud/google"
-  module_depends_on     = [module.kubeflow-cluster.endpoint, local_file.params.content, local_file.params-db.content]
-  platform              = "linux"
-  additional_components = ["kubectl", "beta"]
+  source = "github.com/terraform-google-modules/terraform-google-gcloud//modules/kubectl-wrapper"
 
-  create_cmd_entrypoint = "${path.module}/scripts/kubectl_wrapper.sh"
-  create_cmd_body       = "https://${module.kubeflow-cluster.endpoint} ${data.google_client_config.default.access_token} ${module.kubeflow-cluster.ca_certificate} kubectl apply -k ${local.crd_path}"
+  module_depends_on = [module.kubeflow-cluster.endpoint, local_file.params.content, local_file.params-db.content]
+  cluster_name      = module.kubeflow-cluster.name
+  cluster_location  = module.kubeflow-cluster.location
+  project_id        = var.project_id
+
+  kubectl_create_command  = "kubectl apply -k ${local.crd_path}"
+  kubectl_destroy_command = "kubectl delete -k ${local.crd_path}"
 }
 
 resource "local_file" "params" {
@@ -74,23 +72,25 @@ resource "local_file" "params-db" {
 
 # Deploy KFP GCP yamls
 module "kfp-apply-gcp" {
-  source            = "terraform-google-modules/gcloud/google"
+  source = "github.com/terraform-google-modules/terraform-google-gcloud//modules/kubectl-wrapper"
+
   module_depends_on = [module.kfp-apply-crds.wait, local_file.params.content, local_file.params-db.content]
+  cluster_name      = module.kubeflow-cluster.name
+  cluster_location  = module.kubeflow-cluster.location
+  project_id        = module.project-services.project_id
 
-  platform              = "linux"
-  additional_components = ["kubectl", "beta"]
 
-  create_cmd_entrypoint = "${path.module}/scripts/kubectl_wrapper.sh"
-  create_cmd_body       = "https://${module.kubeflow-cluster.endpoint} ${data.google_client_config.default.access_token} ${module.kubeflow-cluster.ca_certificate} kubectl apply -k ${local.gcp_path}"
+  kubectl_create_command  = "kubectl apply -k ${local.gcp_path}"
+  kubectl_destroy_command = "kubectl delete -k ${local.gcp_path}"
 }
 
 # Workload Identity for pipeline-runner
 module "kfp-pipeline-runner-workload-identity" {
-  source       = "terraform-google-modules/kubernetes-engine/google//modules/workload-identity"
-  project_id   = module.project-services.project_id
-  cluster_name = module.kubeflow-cluster.name
-  # kfp-apply-gcp.wait is a hack to enforce dependency
-  name                = trimsuffix("pipeline-runner-wi-${module.kubeflow-cluster.name}-rand${module.kfp-apply-gcp.wait}", "-rand${module.kfp-apply-gcp.wait}")
+  source = "github.com/terraform-google-modules/terraform-google-kubernetes-engine//modules/workload-identity?ref=fix-gcloud-install"
+
+  project_id          = module.project-services.project_id
+  cluster_name        = module.kubeflow-cluster.name
+  name                = can(module.kfp-apply-gcp.wait) ? "pipeline-runner-wi-${module.kubeflow-cluster.name}" : ""
   location            = module.kubeflow-cluster.location
   namespace           = var.namespace
   use_existing_k8s_sa = true
@@ -99,11 +99,11 @@ module "kfp-pipeline-runner-workload-identity" {
 
 # Workload Identity for cloudsql-proxy
 module "kfp-cloudsql-proxy-workload-identity" {
-  source       = "terraform-google-modules/kubernetes-engine/google//modules/workload-identity"
+  source       = "github.com/terraform-google-modules/terraform-google-kubernetes-engine//modules/workload-identity?ref=fix-gcloud-install"
   project_id   = module.project-services.project_id
   cluster_name = module.kubeflow-cluster.name
-  # kfp-apply-gcp.wait is a hack to enforce dependency
-  name                = trimsuffix("cloudsql-proxy-wi-${module.kubeflow-cluster.name}-rand${module.kfp-apply-gcp.wait}", "-rand${module.kfp-apply-gcp.wait}")
+
+  name                = can(module.kfp-apply-gcp.wait) ? "cloudsql-proxy-wi-${module.kubeflow-cluster.name}" : ""
   location            = module.kubeflow-cluster.location
   namespace           = var.namespace
   use_existing_k8s_sa = true
@@ -112,11 +112,10 @@ module "kfp-cloudsql-proxy-workload-identity" {
 
 # Workload Identity for minio
 module "kfp-minio-gcs-gateway-workload-identity" {
-  source       = "terraform-google-modules/kubernetes-engine/google//modules/workload-identity"
-  project_id   = module.project-services.project_id
-  cluster_name = module.kubeflow-cluster.name
-  # kfp-apply-gcp.wait is a hack to enforce dependency
-  name                = trimsuffix("minio-wi-${module.kubeflow-cluster.name}-rand${module.kfp-apply-gcp.wait}", "-rand${module.kfp-apply-gcp.wait}")
+  source              = "github.com/terraform-google-modules/terraform-google-kubernetes-engine//modules/workload-identity?ref=fix-gcloud-install"
+  project_id          = module.project-services.project_id
+  cluster_name        = module.kubeflow-cluster.name
+  name                = can(module.kfp-apply-gcp.wait) ? "minio-wi-${module.kubeflow-cluster.name}-rand${module.kfp-apply-gcp.wait}" : ""
   location            = module.kubeflow-cluster.location
   namespace           = var.namespace
   use_existing_k8s_sa = true
