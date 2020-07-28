@@ -14,7 +14,7 @@ locals {
 # Enable Project APIs
 module "project-services" {
   source                      = "terraform-google-modules/project-factory/google//modules/project_services"
-  version                     = "~> 6.0.0"
+  version                     = "~> 8.0"
   project_id                  = var.project_id
   disable_services_on_destroy = false
 
@@ -33,6 +33,7 @@ module "project-services" {
 
 module "kubeflow-cluster" {
   source                   = "terraform-google-modules/kubernetes-engine/google//modules/beta-public-cluster"
+  version                  = "~> 10.0"
   project_id               = module.project-services.project_id
   name                     = var.cluster_name
   region                   = var.region
@@ -49,7 +50,8 @@ module "kubeflow-cluster" {
 
 # Deploy KFP CRDs
 module "kfp-apply-crds" {
-  source = "github.com/terraform-google-modules/terraform-google-gcloud//modules/kubectl-wrapper"
+  source  = "terraform-google-modules/gcloud/google//modules/kubectl-wrapper"
+  version = "~> 1.4"
 
   module_depends_on = [module.kubeflow-cluster.endpoint, local_file.params.content, local_file.params-db.content]
   cluster_name      = module.kubeflow-cluster.name
@@ -72,7 +74,8 @@ resource "local_file" "params-db" {
 
 # Deploy KFP GCP yamls
 module "kfp-apply-gcp" {
-  source = "github.com/terraform-google-modules/terraform-google-gcloud//modules/kubectl-wrapper"
+  source  = "terraform-google-modules/gcloud/google//modules/kubectl-wrapper"
+  version = "~> 1.4"
 
   module_depends_on = [module.kfp-apply-crds.wait, local_file.params.content, local_file.params-db.content]
   cluster_name      = module.kubeflow-cluster.name
@@ -139,9 +142,9 @@ resource "google_project_iam_member" "cloudsqlproxy" {
 
 # GSA: Storage Admin binding for Minio SA
 resource "google_storage_bucket_iam_member" "miniogcsgateway" {
-  bucket  = google_storage_bucket.artifact-store.name
-  role    = "roles/storage.admin"
-  member  = module.kfp-minio-gcs-gateway-workload-identity.gcp_service_account_fqn
+  bucket = google_storage_bucket.artifact-store.name
+  role   = "roles/storage.admin"
+  member = module.kfp-minio-gcs-gateway-workload-identity.gcp_service_account_fqn
 }
 
 # Identity-Aware Proxy
@@ -165,7 +168,7 @@ resource "random_id" "instance_name_suffix" {
 
 module "mysql-db" {
   source     = "GoogleCloudPlatform/sql-db/google//modules/safer_mysql"
-  version    = "3.2.0"
+  version    = "~> 3.2"
   name       = local.db_instance
   project_id = module.project-services.project_id
 
